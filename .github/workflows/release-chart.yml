@@ -92,11 +92,24 @@ jobs:
             exit 1
           fi
 
-          # Every image the chart references must either come from this
-          # registry and namespace, or be a bare Docker Hub name. Anything with
-          # an explicit host we do not publish to is unreachable for consumers
-          # and only surfaces as ImagePullBackOff at install time.
-          expected="${REGISTRY}/${{ steps.registry.outputs.namespace }}"
+          # Consumers must be able to pull every image a published chart names.
+          # The real failure this catches is a private registry surviving into a
+          # release, where it only surfaces as ImagePullBackOff at install time.
+          #
+          # Namespace is deliberately NOT checked: charts legitimately reference
+          # upstream images they do not publish, such as ghcr.io/miniflux/miniflux
+          # or getmeili/meilisearch. Requiring our own namespace would reject
+          # every third-party image while still waving through all of Docker Hub.
+          public_registries="
+            docker.io
+            ghcr.io
+            quay.io
+            gcr.io
+            registry.k8s.io
+            public.ecr.aws
+            mcr.microsoft.com
+            registry.gitlab.com
+          "
           repos="$(tar -xzOf "${tgz}" \
             | grep -oE '^[[:space:]]*repository:[[:space:]]*[^[:space:]]+' \
             | awk '{print $2}' | tr -d "\"'" | sort -u)"
@@ -108,18 +121,22 @@ jobs:
           for r in ${repos}; do
             # A first path segment containing "." or ":" is a registry host.
             # Bare names such as getmeili/meilisearch are Docker Hub.
-            case "${r%%/*}" in
-              *.*|*:*)
-                case "${r}" in
-                  "${expected}"/*) ;;
-                  *) bad="${bad} ${r}" ;;
-                esac
-                ;;
+            host="${r%%/*}"
+            case "${host}" in
+              *.*|*:*) ;;
+              *) continue ;;
             esac
+
+            ok=""
+            for allowed in ${public_registries}; do
+              if [ "${host}" = "${allowed}" ]; then ok=1; break; fi
+            done
+            [ -n "${ok}" ] || bad="${bad} ${r}"
           done
 
           if [ -n "${bad}" ]; then
-            echo "::error::Chart references images outside ${expected}:${bad}"
+            echo "::error::Chart references images on registries that are not publicly pullable:${bad}"
+            echo "::error::Publish them to ${REGISTRY}/${{ steps.registry.outputs.namespace }}, or point at a public upstream image."
             exit 1
           fi
 
