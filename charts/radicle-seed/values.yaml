@@ -168,6 +168,31 @@ ingress:
 config:
   extra: {}
 
+# Applies to the seed pod (node, httpd, and the search sidecar).
+#
+# The defaults suit block storage, where the kubelet honours fsGroup. On an NFS
+# export that squashes writes to a fixed identity (Synology "Map all users to
+# admin", or all_squash with anonuid/anongid), every file lands owned by that
+# identity no matter what runAsUser says. Radicle's libgit2 then refuses to open
+# its own repositories with "not owned by current user", and the node can store
+# nothing. Set runAsUser/runAsGroup to the squash identity in that case:
+#
+#   podSecurityContext:
+#     runAsUser: 1024      # anonuid
+#     runAsGroup: 100      # anongid
+#     fsGroup: 100
+#
+# Nothing in the image requires UID 10000: both paths it chowns at build time
+# (/var/lib/radicle and /etc/radicle) are replaced by mounts at runtime.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10000
+  runAsGroup: 10000
+  fsGroup: 10000
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+
 podAnnotations: {}
 podLabels: {}
 priorityClassName: ""

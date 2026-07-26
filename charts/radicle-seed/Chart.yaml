@@ -2,7 +2,7 @@ apiVersion: v2
 name: radicle-seed
 description: A hardened, persistent Radicle seed node with an optional read-only HTTP daemon
 type: application
-version: 0.1.2
+version: 0.1.3
 appVersion: "1.9.1"
 kubeVersion: ">=1.25.0-0"
 home: https://radicle.dev/
