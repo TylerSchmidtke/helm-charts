@@ -1,0 +1,61 @@
+{{- if and .Values.ingress.enabled (not .Values.httpd.enabled) }}
+{{- fail "ingress.enabled requires httpd.enabled=true" }}
+{{- end }}
+{{- if and .Values.httpd.enabled .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "radicle-seed.fullname" . }}
+  labels:
+    {{- include "radicle-seed.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range $host := .Values.ingress.hosts }}
+    - host: {{ $host.host | quote }}
+      http:
+        paths:
+          {{- range $host.paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ include "radicle-seed.fullname" $ }}{{ if $.Values.explorer.enabled }}-explorer{{ else }}-httpd{{ end }}
+                port:
+                  name: http
+          {{- end }}
+          {{- /* The API routes split traffic away from Explorer, so they are
+                 only meaningful when Explorer holds the browser-facing route.
+                 They belong to the host, not to each configured path: emitting
+                 them inside the loop above produced a duplicate /api and /raw
+                 for every additional path, which Ingress controllers resolve
+                 inconsistently. Skip any the operator already declared. */}}
+          {{- if $.Values.explorer.enabled }}
+          {{- $declared := list }}
+          {{- range $host.paths }}
+          {{- $declared = append $declared .path }}
+          {{- end }}
+          {{- range $apiPath := list "/api" "/raw" }}
+          {{- if not (has $apiPath $declared) }}
+          - path: {{ $apiPath }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "radicle-seed.fullname" $ }}-httpd
+                port:
+                  name: http
+          {{- end }}
+          {{- end }}
+          {{- end }}
+    {{- end }}
+{{- end }}

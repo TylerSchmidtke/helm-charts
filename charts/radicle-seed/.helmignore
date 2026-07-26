@@ -1,0 +1,12 @@
+.DS_Store
+.git/
+.github/
+.ansible/
+*.tgz
+
+# Container build context. These are inputs to the image release workflow, not
+# runtime chart content, so they have no reason to sit in every published chart
+# tarball. Nothing here is secret: images/radicle-seed/allowed_signers holds the
+# upstream Radicle maintainers' *public* release-signing keys, which have to be
+# published to be useful as a verification trust anchor.
+images/

@@ -1,0 +1,190 @@
+name: Release Image
+
+# Container images are versioned and released independently of the charts that
+# consume them. The image tag is whatever follows "v" in the git tag, so it can
+# track the upstream version it packages rather than a chart version.
+#
+#   images/radicle-seed/v1.9.1               -> ghcr.io/<ns>/radicle-seed:1.9.1
+#   images/radicle-explorer/v0.18.0-53730d4  -> ghcr.io/<ns>/radicle-explorer:0.18.0-53730d4
+#
+# The Containerfile ARGs remain the source of truth for what is actually
+# packaged; the tag is a label for it.
+#
+# Each architecture is built on a native runner and pushed by digest, then a
+# manifest list is assembled from those digests. Nothing is emulated, so the
+# `apk add` in the seed image's runtime stage runs at native speed.
+#
+# NOTE: `ubuntu-24.04-arm` is only free for public repositories. On a private
+# repo this workflow will either fail to find a runner or bill for it.
+on:
+  push:
+    tags:
+      - "images/*/v*"
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ${{ vars.REGISTRY || 'ghcr.io' }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.resolve.outputs.image }}
+      version: ${{ steps.resolve.outputs.version }}
+      context: ${{ steps.resolve.outputs.context }}
+      target: ${{ steps.resolve.outputs.target }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve image, version and build context
+        id: resolve
+        run: |
+          set -euo pipefail
+          # Do not rely on tag-glob semantics alone to keep chart tags out of
+          # this workflow: "radicle-seed/v0.1.0" would otherwise resolve to a
+          # real build context and publish a bogus radicle-seed:0.1.0 image.
+          case "${GITHUB_REF_NAME}" in
+            images/*) ;;
+            *) echo "::error::'${GITHUB_REF_NAME}' is not an image tag; refusing to build."; exit 1 ;;
+          esac
+
+          rest="${GITHUB_REF_NAME#images/}"
+          image="${rest%%/*}"
+          version="${GITHUB_REF_NAME##*/v}"
+
+          if [ -z "${image}" ] || [ -z "${version}" ] || [ "${image}" = "${rest}" ]; then
+            echo "::error::Malformed tag '${GITHUB_REF_NAME}'. Expected images/<image>/v<version>."
+            exit 1
+          fi
+
+          # Image build contexts live beside the chart that consumes them.
+          context="$(find charts -type d -path "*/images/${image}" | sort)"
+          count="$(printf '%s' "${context}" | grep -c . || true)"
+          if [ "${count}" -ne 1 ]; then
+            echo "::error::Expected exactly one build context for '${image}', found ${count}: ${context}"
+            exit 1
+          fi
+          if [ ! -f "${context}/Containerfile" ]; then
+            echo "::error::No Containerfile in ${context}"
+            exit 1
+          fi
+
+          # GHCR requires a lowercase namespace; GitHub owner names may not be.
+          namespace="$(printf '%s' "${{ vars.REGISTRY_NAMESPACE || github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "context=${context}" >> "$GITHUB_OUTPUT"
+          echo "target=${REGISTRY}/${namespace}/${image}" >> "$GITHUB_OUTPUT"
+
+          echo "Building ${REGISTRY}/${namespace}/${image}:${version} from ${context}"
+
+  build:
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to the registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ needs.prepare.outputs.context }}
+          file: ${{ needs.prepare.outputs.context }}/Containerfile
+          platforms: ${{ matrix.platform }}
+          provenance: false
+          labels: |
+            org.opencontainers.image.title=${{ needs.prepare.outputs.image }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          outputs: type=image,name=${{ needs.prepare.outputs.target }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to the registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push manifest list
+        working-directory: /tmp/digests
+        run: |
+          set -euo pipefail
+          target="${{ needs.prepare.outputs.target }}"
+          version="${{ needs.prepare.outputs.version }}"
+          # shellcheck disable=SC2046
+          docker buildx imagetools create \
+            --tag "${target}:${version}" \
+            $(printf "${target}@sha256:%s " *)
+
+      - name: Report digest
+        run: |
+          set -euo pipefail
+          target="${{ needs.prepare.outputs.target }}"
+          version="${{ needs.prepare.outputs.version }}"
+          digest="$(docker buildx imagetools inspect "${target}:${version}" --format '{{.Manifest.Digest}}')"
+
+          echo "### Image published" >> "$GITHUB_STEP_SUMMARY"
+          echo '' >> "$GITHUB_STEP_SUMMARY"
+          echo "\`${target}:${version}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo '' >> "$GITHUB_STEP_SUMMARY"
+          echo "Pin this digest in the chart's \`values.yaml\`:" >> "$GITHUB_STEP_SUMMARY"
+          echo '' >> "$GITHUB_STEP_SUMMARY"
+          echo "\`\`\`yaml" >> "$GITHUB_STEP_SUMMARY"
+          echo "digest: ${digest}" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"

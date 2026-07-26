@@ -1,0 +1,55 @@
+# syntax=docker/dockerfile:1.7
+ARG ALPINE_VERSION=3.22
+ARG RADICLE_VERSION=1.9.1
+ARG RADICLE_HTTPD_VERSION=0.26.0
+
+FROM --platform=$BUILDPLATFORM alpine:${ALPINE_VERSION} AS fetch
+ARG TARGETARCH
+ARG RADICLE_VERSION
+ARG RADICLE_HTTPD_VERSION
+RUN apk add --no-cache ca-certificates curl openssh-keygen xz
+WORKDIR /build
+COPY allowed_signers .
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) target=x86_64-unknown-linux-musl ;; \
+      arm64) target=aarch64-unknown-linux-musl ;; \
+      *) echo "unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    verify() { \
+      archive="$1"; base="$2"; \
+      curl -fsSLO "${base}/${archive}"; \
+      curl -fsSLO "${base}/${archive}.sha256"; \
+      curl -fsSLO "${base}/${archive}.sig"; \
+      sha256sum -c "${archive}.sha256"; \
+      verified=; \
+      for principal in cloudhead@radicle.xyz erik@radicle.xyz fintan@radicle.xyz lorenz@radicle.xyz rudolfs@osins.org; do \
+        if ssh-keygen -Y verify -f allowed_signers -I "${principal}" -n file -s "${archive}.sig" < "${archive}" 2>/dev/null; then verified=1; break; fi; \
+      done; \
+      test -n "${verified}"; \
+      tar -xJf "${archive}" -C /out --strip-components=1; \
+    }; \
+    mkdir /out; \
+    verify "radicle-${RADICLE_VERSION}-${target}.tar.xz" "https://files.radicle.dev/releases/${RADICLE_VERSION}"; \
+    verify "radicle-httpd-${RADICLE_HTTPD_VERSION}-${target}.tar.xz" "https://files.radicle.dev/releases/radicle-httpd/${RADICLE_HTTPD_VERSION}"; \
+    verify "radicle-search-${RADICLE_HTTPD_VERSION}-${target}.tar.xz" "https://files.radicle.dev/releases/radicle-search/${RADICLE_HTTPD_VERSION}"; \
+    test -x /out/bin/radicle-node; test -x /out/bin/radicle-httpd; test -x /out/bin/radicle-search
+
+FROM alpine:${ALPINE_VERSION}
+RUN apk add --no-cache ca-certificates git git-daemon openssh-keygen tini \
+ && addgroup -S -g 10000 radicle \
+ && adduser -S -D -u 10000 -G radicle -h /var/lib/radicle -s /sbin/nologin radicle \
+ && mkdir -p /var/lib/radicle /etc/radicle \
+ && chown -R 10000:10000 /var/lib/radicle /etc/radicle
+COPY --from=fetch /out/bin/rad /usr/local/bin/rad
+COPY --from=fetch /out/bin/git-remote-rad /usr/local/bin/git-remote-rad
+COPY --from=fetch /out/bin/radicle-node /usr/local/bin/radicle-node
+COPY --from=fetch /out/bin/radicle-httpd /usr/local/bin/radicle-httpd
+COPY --from=fetch /out/bin/radicle-search /usr/local/bin/radicle-search
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod 0555 /usr/local/bin/*
+ENV RAD_HOME=/var/lib/radicle XDG_CONFIG_HOME=/var/lib/radicle XDG_DATA_HOME=/var/lib/radicle TMPDIR=/tmp PATH=/usr/local/bin:/usr/bin:/bin
+USER 10000:10000
+WORKDIR /var/lib/radicle
+ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/entrypoint.sh"]
+CMD ["radicle-node"]

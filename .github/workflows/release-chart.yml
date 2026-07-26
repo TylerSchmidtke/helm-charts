@@ -1,0 +1,138 @@
+name: Release Chart
+
+# Chart releases are pure Helm: no Docker, no buildx, no QEMU. Container images
+# are released independently by release-image.yml, so a template-only fix does
+# not force a multi-arch rebuild of both images.
+on:
+  push:
+    tags:
+      # <chart>/v<version>, e.g. radicle-seed/v0.1.0
+      #
+      # In Actions tag filters `*` does not match `/`, so image tags of the form
+      # images/<name>/v<version> do not match. The exclusion below makes that
+      # independent of matcher semantics.
+      - "*/v*"
+      - "!images/**"
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  HELM_VERSION: v3.18.4
+  REGISTRY: ${{ vars.REGISTRY || 'ghcr.io' }}
+  REGISTRY_REPOSITORY: ${{ vars.REGISTRY_REPOSITORY || 'helm-charts' }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Resolve registry namespace
+        id: registry
+        run: |
+          set -euo pipefail
+          # GHCR requires a lowercase namespace; GitHub owner names may not be.
+          namespace="$(printf '%s' "${{ vars.REGISTRY_NAMESPACE || github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          echo "namespace=${namespace}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve chart and version
+        id: chart
+        run: |
+          set -euo pipefail
+          case "${GITHUB_REF_NAME}" in
+            images/*) echo "::error::'${GITHUB_REF_NAME}' is an image tag, not a chart tag."; exit 1 ;;
+          esac
+
+          chart="${GITHUB_REF_NAME%%/*}"
+          tag_version="${GITHUB_REF_NAME##*/v}"
+
+          if [ ! -f "charts/${chart}/Chart.yaml" ]; then
+            echo "::error::No chart at charts/${chart} for tag ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+
+          chart_version="$(awk '/^version:/ { print $2; exit }' "charts/${chart}/Chart.yaml")"
+
+          # Require the tag and Chart.yaml to agree. Previously the version was
+          # read from Chart.yaml and the tag ignored, so a mistyped tag silently
+          # published a different version.
+          if [ "${tag_version}" != "${chart_version}" ]; then
+            echo "::error::Tag version (${tag_version}) does not match charts/${chart}/Chart.yaml version (${chart_version})."
+            exit 1
+          fi
+
+          echo "name=${chart}" >> "$GITHUB_OUTPUT"
+          echo "version=${chart_version}" >> "$GITHUB_OUTPUT"
+
+      - name: Lint
+        run: helm lint "charts/${{ steps.chart.outputs.name }}"
+
+      - name: Package
+        run: helm package "charts/${{ steps.chart.outputs.name }}" --destination .dist
+
+      - name: Verify package contents
+        run: |
+          set -euo pipefail
+          tgz=".dist/${{ steps.chart.outputs.name }}-${{ steps.chart.outputs.version }}.tgz"
+          echo "Contents of ${tgz}:"
+          tar -tzf "${tgz}"
+
+          # Container build context must never ship inside a chart. Guards the
+          # .helmignore rules against silent regression.
+          if tar -tzf "${tgz}" | grep -E '/(images|\.ansible)/'; then
+            echo "::error::Build context leaked into the chart package (see above)."
+            exit 1
+          fi
+
+          # Every image the chart references must either come from this
+          # registry and namespace, or be a bare Docker Hub name. Anything with
+          # an explicit host we do not publish to is unreachable for consumers
+          # and only surfaces as ImagePullBackOff at install time.
+          expected="${REGISTRY}/${{ steps.registry.outputs.namespace }}"
+          repos="$(tar -xzOf "${tgz}" \
+            | grep -oE '^[[:space:]]*repository:[[:space:]]*[^[:space:]]+' \
+            | awk '{print $2}' | tr -d "\"'" | sort -u)"
+
+          echo "Image repositories referenced by the chart:"
+          printf '  %s\n' ${repos}
+
+          bad=""
+          for r in ${repos}; do
+            # A first path segment containing "." or ":" is a registry host.
+            # Bare names such as getmeili/meilisearch are Docker Hub.
+            case "${r%%/*}" in
+              *.*|*:*)
+                case "${r}" in
+                  "${expected}"/*) ;;
+                  *) bad="${bad} ${r}" ;;
+                esac
+                ;;
+            esac
+          done
+
+          if [ -n "${bad}" ]; then
+            echo "::error::Chart references images outside ${expected}:${bad}"
+            exit 1
+          fi
+
+      - name: Log in to the registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push
+        run: |
+          set -euo pipefail
+          helm push \
+            ".dist/${{ steps.chart.outputs.name }}-${{ steps.chart.outputs.version }}.tgz" \
+            "oci://${REGISTRY}/${{ steps.registry.outputs.namespace }}/${REGISTRY_REPOSITORY}"

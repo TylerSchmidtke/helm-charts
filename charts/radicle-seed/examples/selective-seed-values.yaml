@@ -1,0 +1,15 @@
+# Replace every example value before applying this file.
+auth:
+  existingSecret: radicle-seed-auth
+
+node:
+  alias: seed.example.com
+  externalAddresses:
+    - seed.example.com:8776
+  seedingPolicy:
+    default: block
+
+service:
+  node:
+    type: LoadBalancer
+    annotations: {}

@@ -1,0 +1,17 @@
+{{- if and .Values.ingress.enabled (eq (len .Values.ingress.tls) 0) }}
+{{- fail "set at least one ingress.tls entry when ingress.enabled=true; Miniflux authenticates with a session cookie that must not cross plaintext HTTP" }}
+{{- end }}
+{{- if and .Values.ingress.enabled (not .Values.miniflux.baseUrl) }}
+{{- fail "set miniflux.baseUrl to the public URL when ingress.enabled=true; Miniflux builds absolute links and validates cookies against it" }}
+{{- end }}
+{{- if and .Values.existingSecret (or .Values.miniflux.databaseUrl .Values.miniflux.adminPassword) }}
+{{- fail "existingSecret is set, so miniflux.databaseUrl and miniflux.adminPassword are ignored; unset them to avoid recording unused credentials in the Helm release" }}
+{{- end }}
+{{- if .Values.miniflux.baseUrl }}
+{{- if not (or (hasPrefix "http://" .Values.miniflux.baseUrl) (hasPrefix "https://" .Values.miniflux.baseUrl)) }}
+{{- fail "miniflux.baseUrl must include a scheme, for example https://miniflux.example.com" }}
+{{- end }}
+{{- if hasSuffix "/" .Values.miniflux.baseUrl }}
+{{- fail "miniflux.baseUrl must not have a trailing slash; Miniflux derives its base path from this value" }}
+{{- end }}
+{{- end }}

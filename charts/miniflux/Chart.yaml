@@ -1,0 +1,22 @@
+apiVersion: v2
+name: miniflux
+description: A minimalist, opinionated feed reader backed by PostgreSQL
+type: application
+version: 0.1.0
+appVersion: "2.2.5"
+kubeVersion: ">=1.25.0-0"
+home: https://miniflux.app/
+icon: https://miniflux.app/favicon.ico
+sources:
+  - https://github.com/miniflux/v2
+maintainers:
+  - name: Tyler Schmidtke
+keywords:
+  - rss
+  - atom
+  - feed
+  - reader
+  - miniflux
+annotations:
+  artifacthub.io/category: productivity
+  artifacthub.io/license: MIT

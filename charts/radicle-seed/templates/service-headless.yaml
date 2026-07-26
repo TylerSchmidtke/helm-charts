@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "radicle-seed.fullname" . }}-headless
+  labels:
+    {{- include "radicle-seed.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    {{- include "radicle-seed.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: node
+      port: {{ .Values.node.port }}
+      targetPort: node
+      protocol: TCP

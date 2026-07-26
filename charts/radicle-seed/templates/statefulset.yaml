@@ -1,0 +1,240 @@
+{{- $podLabels := omit (deepCopy .Values.podLabels) "app.kubernetes.io/name" "app.kubernetes.io/instance" }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "radicle-seed.fullname" . }}
+  labels:
+    {{- include "radicle-seed.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "radicle-seed.fullname" . }}-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "radicle-seed.selectorLabels" . | nindent 6 }}
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "radicle-seed.selectorLabels" . | nindent 8 }}
+        {{- with $podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10000
+        runAsGroup: 10000
+        fsGroup: 10000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: node
+          image: {{ include "radicle-seed.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - radicle-node
+            {{- with .Values.node.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: node
+              containerPort: {{ .Values.node.port }}
+              protocol: TCP
+          env:
+            - name: RAD_HOME
+              value: /var/lib/radicle
+            {{- if .Values.search.enabled }}
+            - name: RADICLE_SEARCH_URL
+              value: http://{{ include "radicle-seed.fullname" . }}-meilisearch:7700
+            - name: RADICLE_SEARCH_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.search.existingSecret }}
+                  key: {{ .Values.search.existingSecretKey }}
+            - name: RADICLE_SEARCH_INDEX_NAME
+              value: {{ .Values.search.indexName | quote }}
+            {{- end }}
+            - name: RADICLE_ALIAS
+              value: {{ .Values.node.alias | quote }}
+            - name: RADICLE_BOOTSTRAP
+              value: {{ ternary "yes" "no" .Values.bootstrap.enabled | quote }}
+            - name: RAD_PASSPHRASE
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "radicle-seed.authSecretName" . }}
+                  key: {{ .Values.auth.existingSecretKey }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/radicle
+            - name: config
+              mountPath: /etc/radicle
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          startupProbe:
+            tcpSocket:
+              port: node
+            periodSeconds: {{ .Values.node.startupProbe.periodSeconds }}
+            failureThreshold: {{ .Values.node.startupProbe.failureThreshold }}
+          livenessProbe:
+            tcpSocket:
+              port: node
+            periodSeconds: {{ .Values.node.livenessProbe.periodSeconds }}
+            failureThreshold: {{ .Values.node.livenessProbe.failureThreshold }}
+          readinessProbe:
+            tcpSocket:
+              port: node
+            periodSeconds: {{ .Values.node.readinessProbe.periodSeconds }}
+            failureThreshold: {{ .Values.node.readinessProbe.failureThreshold }}
+          resources:
+            {{- toYaml .Values.node.resources | nindent 12 }}
+        {{- if .Values.httpd.enabled }}
+        - name: httpd
+          image: {{ include "radicle-seed.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - radicle-httpd
+            {{- with .Values.httpd.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: RAD_HOME
+              value: /var/lib/radicle
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/radicle
+              readOnly: true
+            - name: config
+              mountPath: /etc/radicle
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          startupProbe:
+            httpGet:
+              path: /api/v1
+              port: http
+            periodSeconds: {{ .Values.httpd.startupProbe.periodSeconds }}
+            failureThreshold: {{ .Values.httpd.startupProbe.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: /api/v1
+              port: http
+            periodSeconds: {{ .Values.httpd.livenessProbe.periodSeconds }}
+            failureThreshold: {{ .Values.httpd.livenessProbe.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: /api/v1
+              port: http
+            periodSeconds: {{ .Values.httpd.readinessProbe.periodSeconds }}
+            failureThreshold: {{ .Values.httpd.readinessProbe.failureThreshold }}
+          resources:
+            {{- toYaml .Values.httpd.resources | nindent 12 }}
+        {{- end }}
+        {{- if .Values.search.enabled }}
+        - name: search
+          image: {{ include "radicle-seed.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - radicle-search
+          env:
+            - name: RAD_HOME
+              value: /var/lib/radicle
+            - name: RADICLE_SEARCH_MEILI_URL
+              value: http://{{ include "radicle-seed.fullname" . }}-meilisearch:7700
+            - name: RADICLE_SEARCH_MEILI_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.search.existingSecret }}
+                  key: {{ .Values.search.existingSecretKey }}
+            - name: RADICLE_SEARCH_INDEX_NAME
+              value: {{ .Values.search.indexName | quote }}
+            - name: RADICLE_SEARCH_RESCAN_SECS
+              value: {{ .Values.search.rescanSeconds | quote }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/radicle
+              readOnly: true
+            - name: config
+              mountPath: /etc/radicle
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 25m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+        {{- end }}
+      volumes:
+        {{- if .Values.persistence.existingClaim }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.existingClaim }}
+        {{- end }}
+        - name: config
+          configMap:
+            name: {{ include "radicle-seed.fullname" . }}
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 256Mi
+  {{- if not .Values.persistence.existingClaim }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "radicle-seed.selectorLabels" . | nindent 10 }}
+        {{- with .Values.persistence.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      spec:
+        accessModes:
+          {{- toYaml .Values.persistence.accessModes | nindent 10 }}
+        {{- with .Values.persistence.storageClass }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}
+  {{- end }}

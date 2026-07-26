@@ -1,0 +1,40 @@
+Miniflux {{ .Chart.AppVersion }} has been installed as {{ include "miniflux.fullname" . }}.
+
+Miniflux stores everything in PostgreSQL. This chart provisions no volume and
+no database: {{ if .Values.existingSecret }}the connection string comes from key {{ include "miniflux.databaseUrlKey" . }} in the
+existing Secret {{ .Values.existingSecret }}.{{ else }}the connection string comes from miniflux.databaseUrl.{{ end }}
+
+{{- if .Values.miniflux.createAdmin }}
+
+The admin user "{{ .Values.miniflux.adminUsername }}" is created only on the first run against an
+empty database. Miniflux skips creation when the user already exists, so
+changing the password value later has no effect. Change it in the web UI, then
+set miniflux.createAdmin=false to stop mounting the password into the pod.
+{{- else }}
+
+Admin creation is disabled. No ADMIN_PASSWORD is mounted into the pod.
+{{- end }}
+
+{{- if .Values.ingress.enabled }}
+
+Miniflux is reachable at:
+{{- range .Values.ingress.hosts }}
+{{- $host := .host }}
+{{- range .paths }}
+  https://{{ $host }}{{ .path }}
+{{- end }}
+{{- end }}
+{{- else }}
+
+No Ingress is enabled. To reach Miniflux locally:
+
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "miniflux.fullname" . }} 8080:{{ .Values.service.port }}
+
+Then open http://localhost:8080
+{{- end }}
+
+{{- if not .Values.miniflux.runMigrations }}
+
+WARNING: miniflux.runMigrations is false. The pod exits if the schema does not
+already match this Miniflux version.
+{{- end }}

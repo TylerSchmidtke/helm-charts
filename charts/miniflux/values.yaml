@@ -1,0 +1,122 @@
+# Miniflux is stateless: all of its data lives in PostgreSQL. This chart
+# deliberately ships no PersistentVolumeClaim. See README.md.
+image:
+  repository: ghcr.io/miniflux/miniflux
+  # Defaults to Chart.yaml appVersion. Prefer pinning `digest` in production:
+  # it is immutable, and `tag` is then advisory only.
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# The replica count is deliberately not configurable. Miniflux selects feeds to
+# poll with "next_check_at < now()" and takes no row lock, so a second replica
+# re-polls the same feeds: duplicate outbound requests to every publisher and a
+# race on entry insertion. The update strategy is Recreate for the same reason,
+# and so that a new pod never runs migrations against a schema the old pod is
+# still serving.
+
+service:
+  type: ClusterIP
+  port: 8080
+  annotations: {}
+
+# Enable this only with an Ingress controller that terminates TLS. Miniflux
+# serves a session cookie; exposing it over plaintext HTTP leaks credentials.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: miniflux.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+miniflux:
+  # PostgreSQL connection string. Required unless existingSecret is set.
+  # Miniflux has no SQLite support; a PostgreSQL server is a hard prerequisite.
+  #   postgres://miniflux:secret@postgres:5432/miniflux?sslmode=disable
+  databaseUrl: ""
+
+  # Used only to create the first admin user, on the first run against an empty
+  # database. Miniflux skips creation when the user already exists, so changing
+  # this value later does NOT rotate the password. Rotate it in the web UI.
+  adminUsername: "admin"
+  adminPassword: ""
+
+  # Set to false once the admin user exists to stop mounting ADMIN_PASSWORD
+  # into the pod. Requires adminPassword (or its existingSecret key) while true.
+  createAdmin: true
+
+  # Run database migrations on startup. Required on first install and after
+  # upgrading appVersion.
+  runMigrations: true
+
+  # Public URL, including any subpath, e.g. https://miniflux.example.com
+  # A subpath such as https://example.com/miniflux is supported: the chart's
+  # probes use Miniflux's root-level endpoints, which ignore the base path.
+  baseUrl: ""
+
+  # Extra environment variables passed directly to the container.
+  extraEnv: []
+  # - name: POLLING_FREQUENCY
+  #   value: "60"
+
+# Reference a Secret created outside Helm instead of having the chart create
+# one. Helm stores supplied values in the release record, so this is the
+# preferred way to supply the database URL and admin password.
+existingSecret: ""
+existingSecretDatabaseUrlKey: DATABASE_URL
+existingSecretAdminPasswordKey: ADMIN_PASSWORD
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    memory: 512Mi
+
+# Miniflux's /healthcheck endpoint pings the database, which makes it a
+# readiness signal, not a liveness one. Liveness therefore targets /liveness,
+# a static handler, so a transient database outage cannot trigger a restart
+# loop. Both endpoints are served at the root, independent of BASE_URL.
+startupProbe:
+  periodSeconds: 5
+  failureThreshold: 30
+livenessProbe:
+  periodSeconds: 30
+  failureThreshold: 3
+readinessProbe:
+  periodSeconds: 10
+  failureThreshold: 3
+
+# Defaults satisfy the restricted Pod Security Standard. UID/GID 65534 matches
+# the upstream image, which declares USER 65534.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+  runAsGroup: 65534
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+podAnnotations: {}
+podLabels: {}
+priorityClassName: ""
+terminationGracePeriodSeconds: 30
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []

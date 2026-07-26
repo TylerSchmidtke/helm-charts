@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "radicle-seed.fullname" . }}-node
+  labels:
+    {{- include "radicle-seed.labels" . | nindent 4 }}
+  {{- with .Values.service.node.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.node.type }}
+  {{- if and (eq .Values.service.node.type "LoadBalancer") .Values.service.node.externalTrafficPolicy }}
+  externalTrafficPolicy: {{ .Values.service.node.externalTrafficPolicy }}
+  {{- end }}
+  {{- with .Values.service.node.loadBalancerIP }}
+  loadBalancerIP: {{ . }}
+  {{- end }}
+  selector:
+    {{- include "radicle-seed.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: node
+      port: {{ .Values.node.port }}
+      targetPort: node
+      protocol: TCP
+      {{- with .Values.service.node.nodePort }}
+      nodePort: {{ . }}
+      {{- end }}

@@ -1,0 +1,174 @@
+# Built from Radicle's signed 1.9.1 / 0.26.0 release archives, including
+# radicle-search. Image recipes live in images/ and are released independently
+# of this chart by the release-image.yml workflow, so the image tag tracks the
+# upstream Radicle version rather than the chart version.
+#
+# Images are published to a public registry so that any cluster can pull them
+# without private network access or custom CA trust. Prefer pinning `digest`
+# for production: it is immutable, and `tag` is then advisory only.
+image:
+  repository: ghcr.io/tylerschmidtke/radicle-seed
+  tag: 1.9.1
+  digest: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Radicle's identity, Git storage, database, and Unix socket live on this PVC.
+# Never delete it or change the passphrase secret without a tested backup.
+persistence:
+  existingClaim: ""
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 20Gi
+  annotations: {}
+
+# The image creates the identity only on an empty PVC and only when true.
+bootstrap:
+  enabled: true
+
+# Prefer an existing Secret created outside Helm. It must have the key named by
+# existingSecretKey. `passphrase` is only suitable for local development:
+# Helm stores supplied values in the release record.
+auth:
+  existingSecret: ""
+  existingSecretKey: RAD_PASSPHRASE
+  passphrase: ""
+
+node:
+  # Use the public DNS name of this seed for the alias.
+  alias: radicle-seed
+  listenAddress: 0.0.0.0
+  port: 8776
+  # Each address is advertised to peers as <host>:<port>. Set at least one
+  # publicly reachable address before deploying a public seed.
+  externalAddresses: []
+  seedingPolicy:
+    # "block" is selective seeding. Use "allow" only after accepting the
+    # implications of replicating permissionless data. scope applies to allow.
+    default: block
+    scope: all
+  extraArgs: []
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 2Gi
+  startupProbe:
+    failureThreshold: 30
+    periodSeconds: 10
+  livenessProbe:
+    periodSeconds: 30
+    failureThreshold: 3
+  readinessProbe:
+    periodSeconds: 10
+    failureThreshold: 3
+
+# This is deliberately a separate public Service. Do not add the HTTP daemon
+# port here: its API should only be exposed through a TLS-terminating Ingress.
+service:
+  node:
+    type: LoadBalancer
+    annotations: {}
+    externalTrafficPolicy: Local
+    loadBalancerIP: ""
+    nodePort: null
+
+httpd:
+  # radicle-httpd exposes a read-only API over the node's storage.
+  # The bundled image listens on 8080; the Service and probes use that port.
+  enabled: true
+  extraArgs: []
+  resources:
+    requests:
+      cpu: 25m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+  startupProbe:
+    failureThreshold: 30
+    periodSeconds: 10
+  livenessProbe:
+    periodSeconds: 30
+    failureThreshold: 3
+  readinessProbe:
+    periodSeconds: 10
+    failureThreshold: 3
+
+# A dedicated static Radicle Explorer deployment. It is enabled by default
+# alongside httpd and receives the browser-facing route from the Ingress.
+explorer:
+  enabled: true
+  # Public HTTPS hostname Explorer advertises as its preferred seed, and the
+  # name a browser resolves to reach the HTTP API. Defaults to the first
+  # ingress.hosts entry. This is deliberately not node.alias: that is a Radicle
+  # peer display name, not a DNS name.
+  preferredSeedHost: ""
+  # Tagged as <explorer API version>-<pinned upstream revision>, matching
+  # EXPLORER_REV in images/radicle-explorer/Containerfile.
+  image:
+    repository: ghcr.io/tylerschmidtke/radicle-explorer
+    tag: 0.18.0-53730d4
+    digest: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+
+# Optional typo-tolerant repository search. This requires the bundled
+# radicle-search binary and a separate Meilisearch master-key Secret.
+search:
+  enabled: false
+  existingSecret: ""
+  existingSecretKey: MEILI_MASTER_KEY
+  indexName: repos
+  rescanSeconds: 3600
+  meilisearch:
+    image:
+      repository: getmeili/meilisearch
+      tag: v1.16.0
+      digest: ""
+      pullPolicy: IfNotPresent
+    persistence:
+      existingClaim: ""
+      storageClass: ""
+      accessModes:
+        - ReadWriteOnce
+      size: 5Gi
+      annotations: {}
+    resources:
+      requests:
+        cpu: 50m
+        memory: 256Mi
+      limits:
+        memory: 1Gi
+
+# Enable this only with an Ingress controller that terminates TLS. Configure a
+# certificate through the controller or an integration such as cert-manager.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: seed.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# Additional top-level entries merged into Radicle's config.json. Values here
+# are public ConfigMap data; do not put secrets in this map.
+config:
+  extra: {}
+
+podAnnotations: {}
+podLabels: {}
+priorityClassName: ""
+terminationGracePeriodSeconds: 60

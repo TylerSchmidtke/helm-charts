@@ -1,0 +1,122 @@
+{{- if .Values.search.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "radicle-seed.fullname" . }}-meilisearch
+  labels:
+    {{- include "radicle-seed.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ include "radicle-seed.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: meilisearch
+  ports:
+    - name: http
+      port: 7700
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "radicle-seed.fullname" . }}-meilisearch
+  labels:
+    {{- include "radicle-seed.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "radicle-seed.fullname" . }}-meilisearch
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "radicle-seed.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: meilisearch
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "radicle-seed.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: meilisearch
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: meilisearch
+          image: {{ include "radicle-seed.meilisearchImage" . | quote }}
+          imagePullPolicy: {{ .Values.search.meilisearch.image.pullPolicy }}
+          env:
+            - name: MEILI_ENV
+              value: production
+            - name: MEILI_NO_ANALYTICS
+              value: "true"
+            - name: MEILI_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.search.existingSecret }}
+                  key: {{ .Values.search.existingSecretKey }}
+          ports:
+            - name: http
+              containerPort: 7700
+          volumeMounts:
+            - name: data
+              mountPath: /meili_data
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            {{- /* Meilisearch keeps its database, dumps, and snapshots under
+                   /meili_data, so the root filesystem can stay read-only. */}}
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+          resources:
+            {{- toYaml .Values.search.meilisearch.resources | nindent 12 }}
+      volumes:
+        {{- if .Values.search.meilisearch.persistence.existingClaim }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Values.search.meilisearch.persistence.existingClaim }}
+        {{- end }}
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+  {{- if not .Values.search.meilisearch.persistence.existingClaim }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "radicle-seed.labels" . | nindent 10 }}
+        {{- with .Values.search.meilisearch.persistence.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      spec:
+        accessModes:
+          {{- toYaml .Values.search.meilisearch.persistence.accessModes | nindent 10 }}
+        {{- with .Values.search.meilisearch.persistence.storageClass }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.search.meilisearch.persistence.size }}
+  {{- end }}
+{{- end }}

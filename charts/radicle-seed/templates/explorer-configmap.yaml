@@ -1,0 +1,26 @@
+{{- if .Values.explorer.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "radicle-seed.fullname" . }}-explorer
+  labels:
+    {{- include "radicle-seed.labels" . | nindent 4 }}
+data:
+  config.json: |
+    {
+      "nodes": {
+        "fallbackPublicExplorer": "https://radicle.network/nodes/$host/$rid$path",
+        "requiredApiVersion": "~0.18.0",
+        "defaultHttpdPort": 443,
+        "defaultLocalHttpdPort": 8080,
+        "defaultHttpdScheme": "https",
+        "homepage": "node"
+      },
+      "source": { "commitsPerPage": 30 },
+      "supportWebsite": "https://radicle.zulipchat.com",
+      "deploymentId": null,
+      "preferredSeeds": [
+        { "hostname": {{ include "radicle-seed.explorerSeedHost" . | quote }}, "port": 443, "scheme": "https" }
+      ]
+    }
+{{- end }}

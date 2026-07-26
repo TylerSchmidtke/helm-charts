@@ -1,0 +1,144 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "miniflux.fullname" . }}
+  labels:
+    {{- include "miniflux.labels" . | nindent 4 }}
+spec:
+  {{- /* Single replica and Recreate are load-bearing, not defaults. See the
+         replica note in values.yaml: concurrent pods double-poll every feed
+         and can run migrations against a schema the old pod still serves. */}}
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "miniflux.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- /* Roll the pods when the chart-managed Secret changes. Without this,
+             rotating the database URL leaves the old value in the running
+             container until something else triggers a restart. An existing
+             Secret is outside Helm's view, so no checksum is possible. */}}
+      {{- $annotations := deepCopy .Values.podAnnotations }}
+      {{- if not .Values.existingSecret }}
+      {{- $checksum := include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+      {{- $annotations = merge (dict "checksum/secret" $checksum) $annotations }}
+      {{- end }}
+      {{- with $annotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "miniflux.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: miniflux
+          image: {{ include "miniflux.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: LISTEN_ADDR
+              value: "0.0.0.0:8080"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "miniflux.secretName" . }}
+                  key: {{ include "miniflux.databaseUrlKey" . }}
+            - name: RUN_MIGRATIONS
+              value: {{ .Values.miniflux.runMigrations | ternary "1" "0" | quote }}
+            - name: CREATE_ADMIN
+              value: {{ .Values.miniflux.createAdmin | ternary "1" "0" | quote }}
+            {{- if .Values.miniflux.createAdmin }}
+            - name: ADMIN_USERNAME
+              value: {{ .Values.miniflux.adminUsername | quote }}
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "miniflux.secretName" . }}
+                  key: {{ include "miniflux.adminPasswordKey" . }}
+            {{- end }}
+            {{- if .Values.miniflux.baseUrl }}
+            - name: BASE_URL
+              value: {{ .Values.miniflux.baseUrl | quote }}
+            {{- end }}
+            {{- with .Values.miniflux.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          {{- /* Migrations run before the listener starts, so a slow migration
+                 must not be mistaken for a hung process. The startup probe
+                 absorbs that window and holds the other probes off. */}}
+          startupProbe:
+            httpGet:
+              path: /liveness
+              port: http
+            periodSeconds: {{ .Values.startupProbe.periodSeconds }}
+            failureThreshold: {{ .Values.startupProbe.failureThreshold }}
+          {{- /* /liveness is a static handler. Liveness must not depend on the
+                 database, or an outage there restarts otherwise healthy pods. */}}
+          livenessProbe:
+            httpGet:
+              path: /liveness
+              port: http
+            periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
+            failureThreshold: {{ .Values.livenessProbe.failureThreshold }}
+          {{- /* /readiness pings the database, so a pod that cannot reach
+                 PostgreSQL is pulled from the Service but left running. */}}
+          readinessProbe:
+            httpGet:
+              path: /readiness
+              port: http
+            periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
+            failureThreshold: {{ .Values.readinessProbe.failureThreshold }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        {{- /* readOnlyRootFilesystem is on, and Go spills large multipart
+               uploads (OPML import) to the temporary directory. */}}
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

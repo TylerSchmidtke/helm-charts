@@ -1,0 +1,27 @@
+{{- if not (or .Values.auth.existingSecret .Values.auth.passphrase) }}
+{{- fail "set auth.existingSecret or auth.passphrase; the seed identity must have a persistent passphrase" }}
+{{- end }}
+{{- if eq (len .Values.node.externalAddresses) 0 }}
+{{- fail "set at least one node.externalAddresses entry such as seed.example.com:8776" }}
+{{- end }}
+{{- if and .Values.ingress.enabled (eq (len .Values.ingress.tls) 0) }}
+{{- fail "set at least one ingress.tls entry when ingress.enabled=true" }}
+{{- end }}
+{{- if and (not .Values.bootstrap.enabled) (not .Values.persistence.existingClaim) }}
+{{- fail "bootstrap.enabled=false requires persistence.existingClaim with a pre-initialized Radicle identity" }}
+{{- end }}
+{{- if and .Values.search.enabled (not .Values.search.existingSecret) }}
+{{- fail "search.enabled=true requires search.existingSecret containing a Meilisearch master key" }}
+{{- end }}
+{{- if and .Values.explorer.enabled (not .Values.httpd.enabled) }}
+{{- fail "explorer.enabled=true requires httpd.enabled=true" }}
+{{- end }}
+{{- /* The image entrypoint already execs `radicle-httpd --listen 0.0.0.0:8080`,
+       and port 8080 is baked into the probes and the httpd Service. A second
+       --listen in extraArgs either duplicates the flag or silently moves the
+       daemon off the port everything else targets. */}}
+{{- range .Values.httpd.extraArgs }}
+{{- if hasPrefix "--listen" . }}
+{{- fail "httpd.extraArgs must not set --listen; the entrypoint binds 0.0.0.0:8080 and the probes and Service target that port" }}
+{{- end }}
+{{- end }}

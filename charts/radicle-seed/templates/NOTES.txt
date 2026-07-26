@@ -1,0 +1,12 @@
+Radicle seed {{ include "radicle-seed.fullname" . }} has been installed.
+
+Before the pod can bootstrap, RAD_PASSPHRASE must be available as key
+{{ .Values.auth.existingSecretKey }} in Secret {{ include "radicle-seed.authSecretName" . }}.
+
+The node only advertises values from node.externalAddresses. Set each value to
+the public DNS name and TCP port exposed by the {{ include "radicle-seed.fullname" . }}-node Service.
+
+The HTTP daemon is {{ if .Values.httpd.enabled }}enabled and is available only through the internal Service {{ include "radicle-seed.fullname" . }}-httpd{{ else }}disabled{{ end }}.
+{{- if and .Values.httpd.enabled (not .Values.ingress.enabled) }}
+Enable ingress with TLS termination before exposing this API publicly.
+{{- end }}

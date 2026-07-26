@@ -1,0 +1,21 @@
+# syntax=docker/dockerfile:1.7
+ARG EXPLORER_REV=53730d4cb3edd49683476ccd0dd781d2691de3e3
+
+# The Explorer is a static Vite SPA: its build output is architecture
+# independent, so this stage is pinned to the build platform. Without the
+# pin, `npm ci` and `npm run build` run under QEMU for every non-native
+# target, which dominates the build time and buys nothing.
+FROM --platform=$BUILDPLATFORM node:24.15.0-bookworm-slim AS build
+ARG EXPLORER_REV
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git tar && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+RUN git init . && git remote add origin https://github.com/radicle-dev/radicle-explorer.git \
+ && git fetch --depth=1 origin "${EXPLORER_REV}" && git checkout --detach FETCH_HEAD \
+ && test "$(git rev-parse HEAD)" = "${EXPLORER_REV}"
+RUN npm ci
+RUN VITE_RUNTIME_CONFIG=true npm run build
+
+FROM nginxinc/nginx-unprivileged:1.29-alpine
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /src/build /usr/share/nginx/html
+EXPOSE 8080

@@ -1,0 +1,18 @@
+{{- $policy := dict "default" .Values.node.seedingPolicy.default }}
+{{- if eq .Values.node.seedingPolicy.default "allow" }}
+{{- $_ := set $policy "scope" .Values.node.seedingPolicy.scope }}
+{{- end }}
+{{- $managedNode := dict "alias" .Values.node.alias "listen" (list (printf "%s:%v" .Values.node.listenAddress .Values.node.port)) "externalAddresses" .Values.node.externalAddresses "seedingPolicy" $policy }}
+{{- $config := deepCopy .Values.config.extra }}
+{{- $extraNode := default (dict) (get $config "node") }}
+{{- $node := mustMergeOverwrite (deepCopy $extraNode) $managedNode }}
+{{- $_ := set $config "node" $node }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "radicle-seed.fullname" . }}
+  labels:
+    {{- include "radicle-seed.labels" . | nindent 4 }}
+data:
+  config.json: |
+{{ $config | toPrettyJson | indent 4 }}

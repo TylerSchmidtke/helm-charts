@@ -1,0 +1,35 @@
+# Replace every example value before applying this file.
+# Create the passphrase Secret separately, then set auth.existingSecret to it.
+auth:
+  existingSecret: radicle-seed-auth
+
+node:
+  alias: seed.example.com
+  externalAddresses:
+    - seed.example.com:8776
+  seedingPolicy:
+    default: allow
+    scope: all
+
+# The P2P Service needs a static, publicly routable address. Configure this
+# section for the cloud provider or LoadBalancer implementation in use.
+service:
+  node:
+    type: LoadBalancer
+    annotations: {}
+
+# An Ingress only serves the read-only HTTP API. Configure TLS using the
+# conventions of your controller, for example cert-manager annotations.
+ingress:
+  enabled: true
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: seed.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: seed-example-com-tls
+      hosts:
+        - seed.example.com
