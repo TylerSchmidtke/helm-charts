@@ -8,7 +8,7 @@ spec:
   clusterIP: None
   publishNotReadyAddresses: true
   selector:
-    {{- include "radicle-seed.selectorLabels" . | nindent 4 }}
+    {{- include "radicle-seed.seedSelectorLabels" . | nindent 4 }}
   ports:
     - name: node
       port: {{ .Values.node.port }}

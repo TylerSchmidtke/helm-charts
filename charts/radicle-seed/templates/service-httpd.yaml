@@ -8,7 +8,7 @@ metadata:
 spec:
   type: ClusterIP
   selector:
-    {{- include "radicle-seed.selectorLabels" . | nindent 4 }}
+    {{- include "radicle-seed.seedSelectorLabels" . | nindent 4 }}
   ports:
     - name: http
       port: 8080

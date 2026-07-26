@@ -31,6 +31,24 @@ app.kubernetes.io/name: {{ include "radicle-seed.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
+{{/*
+Selector for the seed pod specifically.
+
+Services MUST use this rather than selectorLabels. The Explorer and Meilisearch
+pods also carry name + instance, and both expose a port named "http", so a
+Service selecting on name + instance alone silently load-balances the HTTP API
+across all three: the API then returns Explorer's index.html or a Meilisearch
+404 at random.
+
+This is deliberately absent from the StatefulSet's spec.selector, which is
+immutable after creation. It appears only in the pod template, so existing
+installs upgrade in place.
+*/}}
+{{- define "radicle-seed.seedSelectorLabels" -}}
+{{ include "radicle-seed.selectorLabels" . }}
+app.kubernetes.io/component: seed
+{{- end }}
+
 {{- define "radicle-seed.authSecretName" -}}
 {{- default (include "radicle-seed.fullname" .) .Values.auth.existingSecret }}
 {{- end }}

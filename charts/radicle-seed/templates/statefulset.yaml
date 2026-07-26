@@ -1,4 +1,4 @@
-{{- $podLabels := omit (deepCopy .Values.podLabels) "app.kubernetes.io/name" "app.kubernetes.io/instance" }}
+{{- $podLabels := omit (deepCopy .Values.podLabels) "app.kubernetes.io/name" "app.kubernetes.io/instance" "app.kubernetes.io/component" }}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -21,7 +21,7 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
       labels:
-        {{- include "radicle-seed.selectorLabels" . | nindent 8 }}
+        {{- include "radicle-seed.seedSelectorLabels" . | nindent 8 }}
         {{- with $podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -60,17 +60,9 @@ spec:
           env:
             - name: RAD_HOME
               value: /var/lib/radicle
-            {{- if .Values.search.enabled }}
-            - name: RADICLE_SEARCH_URL
-              value: http://{{ include "radicle-seed.fullname" . }}-meilisearch:7700
-            - name: RADICLE_SEARCH_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.search.existingSecret }}
-                  key: {{ .Values.search.existingSecretKey }}
-            - name: RADICLE_SEARCH_INDEX_NAME
-              value: {{ .Values.search.indexName | quote }}
-            {{- end }}
+            {{- /* RADICLE_SEARCH_URL/KEY/INDEX_NAME are read by radicle-httpd,
+                   not radicle-node, and are set on the httpd container below.
+                   radicle-node references none of them. */}}
             - name: RADICLE_ALIAS
               value: {{ .Values.node.alias | quote }}
             - name: RADICLE_BOOTSTRAP
@@ -127,6 +119,21 @@ spec:
           env:
             - name: RAD_HOME
               value: /var/lib/radicle
+            {{- /* radicle-httpd is the component that queries Meilisearch and
+                   advertises search support to Explorer. Without these it
+                   reports the search backend as unavailable, regardless of the
+                   radicle-search sidecar running and indexing correctly. */}}
+            {{- if .Values.search.enabled }}
+            - name: RADICLE_SEARCH_URL
+              value: http://{{ include "radicle-seed.fullname" . }}-meilisearch:7700
+            - name: RADICLE_SEARCH_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.search.existingSecret }}
+                  key: {{ .Values.search.existingSecretKey }}
+            - name: RADICLE_SEARCH_INDEX_NAME
+              value: {{ .Values.search.indexName | quote }}
+            {{- end }}
           volumeMounts:
             - name: data
               mountPath: /var/lib/radicle
