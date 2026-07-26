@@ -83,6 +83,17 @@ existing Secret may use its own.
 {{- end }}
 
 {{/*
+Subpath of baseUrl, e.g. https://example.com/miniflux yields /miniflux. Miniflux
+mounts every route, health endpoints included, under a subrouter for this
+prefix, so probe paths have to carry it. Empty for a host-root baseUrl.
+*/}}
+{{- define "miniflux.basePath" -}}
+{{- with .Values.miniflux.baseUrl -}}
+{{- (urlParse .).path | default "" | trimSuffix "/" -}}
+{{- end -}}
+{{- end }}
+
+{{/*
 Container image reference. A digest, when set, wins over the tag.
 */}}
 {{- define "miniflux.image" -}}

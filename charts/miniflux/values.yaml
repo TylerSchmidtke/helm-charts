@@ -58,8 +58,8 @@ miniflux:
   runMigrations: true
 
   # Public URL, including any subpath, e.g. https://miniflux.example.com
-  # A subpath such as https://example.com/miniflux is supported: the chart's
-  # probes use Miniflux's root-level endpoints, which ignore the base path.
+  # A subpath such as https://example.com/miniflux is supported: Miniflux serves
+  # every route beneath it, so the chart prefixes its probe paths to match.
   baseUrl: ""
 
   # Extra environment variables passed directly to the container.
@@ -81,10 +81,11 @@ resources:
   limits:
     memory: 512Mi
 
-# Miniflux's /healthcheck endpoint pings the database, which makes it a
-# readiness signal, not a liveness one. Liveness therefore targets /liveness,
-# a static handler, so a transient database outage cannot trigger a restart
-# loop. Both endpoints are served at the root, independent of BASE_URL.
+# Miniflux exposes exactly two unauthenticated endpoints: /healthcheck, which
+# pings the database, and /version, which writes a constant. That makes
+# /healthcheck a readiness signal, not a liveness one, so liveness and startup
+# target /version and a transient database outage cannot trigger a restart loop.
+# Paths only; timings below are what the chart exposes.
 startupProbe:
   periodSeconds: 5
   failureThreshold: 30

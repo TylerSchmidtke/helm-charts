@@ -92,28 +92,32 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+          {{- $basePath := include "miniflux.basePath" . }}
           {{- /* Migrations run before the listener starts, so a slow migration
                  must not be mistaken for a hung process. The startup probe
                  absorbs that window and holds the other probes off. */}}
           startupProbe:
             httpGet:
-              path: /liveness
+              path: {{ $basePath }}/version
               port: http
             periodSeconds: {{ .Values.startupProbe.periodSeconds }}
             failureThreshold: {{ .Values.startupProbe.failureThreshold }}
-          {{- /* /liveness is a static handler. Liveness must not depend on the
-                 database, or an outage there restarts otherwise healthy pods. */}}
+          {{- /* /version writes a constant and touches no storage. Liveness must
+                 not depend on the database, or an outage there restarts
+                 otherwise healthy pods. Startup shares it so a database that is
+                 slow to accept connections cannot stall the container past its
+                 failureThreshold and trigger a restart loop. */}}
           livenessProbe:
             httpGet:
-              path: /liveness
+              path: {{ $basePath }}/version
               port: http
             periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
             failureThreshold: {{ .Values.livenessProbe.failureThreshold }}
-          {{- /* /readiness pings the database, so a pod that cannot reach
+          {{- /* /healthcheck pings the database, so a pod that cannot reach
                  PostgreSQL is pulled from the Service but left running. */}}
           readinessProbe:
             httpGet:
-              path: /readiness
+              path: {{ $basePath }}/healthcheck
               port: http
             periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
             failureThreshold: {{ .Values.readinessProbe.failureThreshold }}
