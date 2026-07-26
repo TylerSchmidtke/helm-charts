@@ -103,8 +103,12 @@ spec:
   volumeClaimTemplates:
     - metadata:
         name: data
+        {{- /* Stable labels only. volumeClaimTemplates is immutable, so any
+               label that carries the chart version (helm.sh/chart, as
+               radicle-seed.labels emits) makes every version bump a forbidden
+               update and permanently blocks `helm upgrade`. */}}
         labels:
-          {{- include "radicle-seed.labels" . | nindent 10 }}
+          {{- include "radicle-seed.selectorLabels" . | nindent 10 }}
         {{- with .Values.search.meilisearch.persistence.annotations }}
         annotations:
           {{- toYaml . | nindent 10 }}
